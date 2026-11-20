@@ -1,0 +1,3 @@
+# Hourly snapshots contain private calendar, briefing, and review data.
+/briefing.json
+/preview-data.js

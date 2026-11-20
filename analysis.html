@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Work time analysis · Meridian</title><link rel="stylesheet" href="analysis.css"><script defer src="work-time-core.js"></script><script defer src="analysis.js"></script></head>
+<body><main>
+<header><div><a href="index.html" class="back">← New tab</a><h1>Work time analysis</h1><p>Local punches and breaks. Browser visits are optional context only.</p></div><div class="range"><label>From<input id="rangeStart" type="date"></label><label>Through<input id="rangeEnd" type="date"></label></div></header>
+<p id="openNotice" class="notice" hidden></p>
+<section class="summary" aria-label="Work time summary"><article><small id="workLabel">Selected work</small><strong id="workTotal">0h</strong></article><article><small>Recorded breaks</small><strong id="breakTotal">0h</strong></article><article><small>Longest work stretch</small><strong id="longestTotal">0h</strong></article></section>
+<p id="insight" class="insight"></p>
+<div class="analysisGrid">
+<section class="panel"><div class="heading"><h2>Daily totals</h2><button id="compareHistory" type="button">Compare browser activity</button></div><p id="historyNote" class="note">Browser activity is not loaded. Visit timestamps can add context, but they do not prove work or inactivity.</p><div id="daily"></div></section>
+<section class="panel"><div class="heading"><h2>Chronological log</h2><button id="previewCopilot" type="button">Preview Copilot summary</button></div><div id="timeline"></div></section>
+</div>
+</main>
+<dialog id="copilotPreview"><div class="heading"><h2>Copilot analysis preview</h2><button id="closePreview" aria-label="Close preview">×</button></div><p class="note">Only this aggregate text is copied. Nothing is sent until you open Copilot and paste it.</p><textarea id="copilotText" rows="16" readonly></textarea><div class="dialogActions"><button id="copyCopilot" class="primary">Copy and open Copilot</button></div></dialog>
+</body></html>
