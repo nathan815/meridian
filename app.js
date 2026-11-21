@@ -12,6 +12,13 @@ function address(value) {
   return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password ? u.href : null;
 }
 function notice(text) { $('notice').hidden = false; $('notice').textContent = text; }
+let settingsSavedTimer;
+function showSettingsSaved() {
+  clearTimeout(settingsSavedTimer);
+  $('settingsSaved').textContent = '✓ Saved';
+  settingsSavedTimer = setTimeout(() => {$('settingsSaved').textContent = '';}, 1800);
+}
+globalThis.MeridianSettingsStatus = Object.freeze({saved: showSettingsSaved});
 if (location.hash === '#test-break-action') {
   notice('Take a break clicked on the test notification!');
   $('notice').classList.add('toast');
@@ -28,6 +35,7 @@ function buttonIcon(button,d){
 }
 buttonIcon(document.querySelector('#search .go'),'M4 12h16m-7-7 7 7-7 7');
 buttonIcon($('toggleTravel'),'M4 7v5h5M4.6 12a7.5 7.5 0 1 0 2.2-5.3M12 8v4l3 2');
+buttonIcon($('briefingOptionsButton'),'M6 12h.01M12 12h.01M18 12h.01');
 for(const button of document.querySelectorAll('dialog button[aria-label^="Close"]'))buttonIcon(button,'M6 6l12 12M18 6 6 18');
 const defaults = {
   pins: [['GitHub','https://github.com'],['Outlook','https://outlook.office.com'],['Teams','https://teams.microsoft.com'],['Microsoft Learn','https://learn.microsoft.com']],
@@ -39,6 +47,52 @@ function read(key) {
   catch { notice('Saved settings could not be read. Showing defaults.'); return defaults[key]; }
 }
 function save(key, val) { localStorage.setItem('meridian.'+key, JSON.stringify(val)); }
+function savePrimaryClock(timeZone) { localStorage.setItem('meridian.primaryClock',JSON.stringify(timeZone)); }
+const minimalModeKey='meridian.minimalClockMode';
+let dashboardScrollY=0;
+const minimalHidden=()=>[
+  $('search'),
+  $('notice'),
+  $('pinsSection'),
+  document.querySelector('.work'),
+  $('stamp'),
+  ...document.querySelectorAll('dialog:not(#appearance):not(#settings),[popover],#visitor')
+].filter(Boolean);
+function closeDashboardOverlays(){
+  for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
+  for(const popover of document.querySelectorAll(':popover-open'))popover.hidePopover();
+}
+function setMinimalMode(enabled,{persist=false,focus=true}={}){
+  const wasEnabled=document.body.classList.contains('minimalClockMode');
+  if(enabled&&!wasEnabled)dashboardScrollY=scrollY;
+  if(enabled)closeDashboardOverlays();
+  document.body.classList.toggle('minimalClockMode',enabled);
+  $('minimalBack').hidden=!enabled;
+  $('minimalClockButton').setAttribute('aria-pressed',String(enabled));
+  for(const element of minimalHidden())element.inert=enabled;
+  if(persist){
+    if(enabled)localStorage.setItem(minimalModeKey,'true');
+    else localStorage.removeItem(minimalModeKey);
+  }
+  requestAnimationFrame(()=>{
+    scrollTo(0,enabled?0:dashboardScrollY);
+    if(focus)(enabled?$('minimalBack'):$('minimalClockButton')).focus();
+  });
+}
+$('minimalClockButton').onclick=()=>setMinimalMode(true,{persist:true});
+$('minimalBack').onclick=()=>setMinimalMode(false,{persist:true});
+document.addEventListener('keydown',event=>{
+  if(event.key!=='Escape'||!document.body.classList.contains('minimalClockMode'))return;
+  if(document.querySelector('dialog[open]'))return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  setMinimalMode(false,{persist:true});
+},true);
+window.addEventListener('storage',event=>{
+  if(event.key===minimalModeKey)setMinimalMode(event.newValue==='true');
+});
+const initialMinimalMode=localStorage.getItem(minimalModeKey)==='true';
+setMinimalMode(initialMinimalMode,{focus:initialMinimalMode});
 function readObject(key) {
   try {
     const value=JSON.parse(localStorage.getItem('meridian.'+key));
@@ -128,19 +182,24 @@ const terrains=[
   ['#d6ece7','#1e4944','#8cbab2','#4d8c85','#fff2c3'],
   ['#f3e7bd','#4b4833','#c8bc86','#948b61','#fff5d5']
 ];
-function horizon(hour) {
-  const night=hour<6||hour>=20, p=terrains[night?1:hour<11?3:hour<16?2:0];
+let horizonId=0;
+function horizon(moment,timeZone) {
+  const solar=MeridianSolar.solarState(moment,MeridianSolar.representativeCoordinates(timeZone,moment));
+  const night=solar.phase==='night';
+  const palette=night?1:solar.phase!=='daylight'?0:solar.elevation>Math.sin(35*Math.PI/180)?2:solar.rising?3:0;
+  const p=terrains[palette], patternId=`grain${horizonId++}`;
   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('viewBox','0 0 270 140');svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');
   // All geometry and pigments are local constants, never snapshot or preference text.
-  svg.innerHTML=`<defs><pattern id="grain${hour}" width="5" height="5" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".55" fill="${p[1]}" opacity=".3"/></pattern></defs>
-  ${night?'<path d="M215 17a15 15 0 1 0 18 18 17 17 0 0 1-18-18" fill="#f3e5c4"/><path d="M182 18h3m49 38h3m-77-22h2m90-20h2" stroke="#fff"/>':`<circle cx="214" cy="${hour<11?52:hour<16?31:65}" r="16" fill="${p[4]}"/>`}
+  const sunY=Math.max(18,Math.min(75,65-solar.elevation*58));
+  svg.innerHTML=`<defs><pattern id="${patternId}" width="5" height="5" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".55" fill="${p[1]}" opacity=".3"/></pattern></defs>
+  ${night?'<path d="M215 17a15 15 0 1 0 18 18 17 17 0 0 1-18-18" fill="#f3e5c4"/><path d="M182 18h3m49 38h3m-77-22h2m90-20h2" stroke="#fff"/>':`<circle cx="214" cy="${sunY.toFixed(1)}" r="16" fill="${p[4]}"/>`}
   <path d="M0 126Q45 111 82 114T152 97Q186 84 207 73T270 51V140H0Z" fill="${p[2]}"/>
   <path d="M0 134Q55 122 95 125T177 107Q210 90 236 89T270 80V140H0Z" fill="${p[3]}"/>
-  <path d="M0 134Q55 122 95 125T177 107Q210 90 236 89T270 80V140H0Z" fill="url(#grain${hour})"/>`;
+  <path d="M0 134Q55 122 95 125T177 107Q210 90 236 89T270 80V140H0Z" fill="url(#${patternId})"/>`;
   return [p,svg];
 }
-$('primaryClock').onchange=e=>{localStorage.setItem('meridian.primaryClock',e.target.value);clocks();};
+$('primaryClock').onchange=e=>{savePrimaryClock(e.target.value);clocks();};
 let travelMinutes=0;
 const travelRange=$('travelRange');
 $('toggleTravel').onclick=()=>{
@@ -168,14 +227,14 @@ $('travelNow').onclick=()=>{travelRange.value='0';syncTravel();travelRange.focus
 function clocks() {
   const now=travelMoment();
   const list=read('clocks'), picker=$('primaryClock'), saved=localStorage.getItem('meridian.primaryClock');
-  const primary=list.find(c=>JSON.stringify(c)===saved)||list.find(c=>c[1]==='America/New_York')||list[0]||defaults.clocks[0];
+  const primaryTimeZone=MeridianClockSettings.primaryTimeZone(saved,list);
+  const primary=list.find(c=>c[1]===primaryTimeZone)||defaults.clocks[0];
   const choices=list.length?list:[primary];
   if(picker.dataset.list!==JSON.stringify(choices)){
-    picker.replaceChildren(...choices.map(c=>new Option(c[0],JSON.stringify(c))));
+    picker.replaceChildren(...choices.map(c=>new Option(c[0],c[1])));
     picker.dataset.list=JSON.stringify(choices);
   }
-  picker.value=JSON.stringify(primary);picker.disabled=!list.length;
-  $('primaryName').textContent=primary[0];
+  picker.value=primary[1];picker.disabled=!list.length;
   const zone={timeZone:primary[1]};
   const liveNow=new Date();
   const parts=new Intl.DateTimeFormat('en-US',{...zone,hour:'numeric',minute:'2-digit',hour12:true}).formatToParts(liveNow);
@@ -189,16 +248,44 @@ function clocks() {
   $('clocks').replaceChildren(...list.map(([name,timeZone])=>{
     const fmt=options=>new Intl.DateTimeFormat('en-GB',{...options,timeZone}).format(now);
     const time=fmt({hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
-    const [colors,art]=horizon(Number(time.slice(0,2)));
+    const [colors,art]=horizon(now,timeZone);
     const card=node('div','clock');card.style.setProperty('--sky',colors[0]);card.style.setProperty('--sky-ink',colors[1]);
     const primary=node('time','',fmt({hour:'numeric',minute:'2-digit',hourCycle:'h12'}).toUpperCase());
     primary.dateTime=time;
-    const zonePart=new Intl.DateTimeFormat('en-US',{timeZone,timeZoneName:'longOffset'}).formatToParts(now).find(part=>part.type==='timeZoneName').value;
-    const offset=zonePart==='GMT'?'UTC+00:00':zonePart.replace('GMT','UTC');
+    const offset=MeridianClockSettings.offset(timeZone,now);
     card.append(art,node('strong','',name),primary,node('small','',`${time} · ${offset}`),node('small','',fmt({weekday:'short',day:'numeric',month:'short'})));return card;
   }));
 }
 let editing;
+let draggedClock=null;
+function clearClockDrop(){
+  for(const entry of $('entries').querySelectorAll('[data-drop]'))delete entry.dataset.drop;
+}
+function endClockDrag(){
+  draggedClock=null;clearClockDrop();
+  $('entries').querySelector('.dragging')?.classList.remove('dragging');
+}
+function moveClock(from,to){
+  const items=read('clocks'),updated=MeridianClockSettings.move(items,from,to);
+  if(updated===items)return;
+  save('clocks',updated);listEntries();clocks();
+  $('entries').children[to]?.querySelector('.clockDrag')?.focus();
+}
+function clockDropSlot(event,row,index){
+  return index+Number(event.clientY>=row.getBoundingClientRect().top+row.getBoundingClientRect().height/2);
+}
+function commitClockName(input,index,timeZone){
+  const name=input.value.trim();
+  if(!name){input.setCustomValidity('Enter a name.');input.reportValidity();return false;}
+  const items=read('clocks');
+  if(items[index]?.[1]!==timeZone){input.setCustomValidity('This clock changed. Close and reopen the editor.');input.reportValidity();return false;}
+  save('clocks',MeridianClockSettings.rename(items,index,name));input.value=name;input.setCustomValidity('');clocks();
+  const remove=input.closest('.entry').querySelector('.removeClock'),drag=input.closest('.entry').querySelector('.clockDrag');
+  input.ariaLabel='Name for '+name+' clock';
+  remove.ariaLabel=remove.title='Remove '+name+' clock';
+  drag.ariaLabel=drag.title='Drag to reorder '+name+', or use Alt + Up / Down';
+  return true;
+}
 function editPin(index,name,url){
   const dialog=$('pinEditDialog'),field=$('pinEditUrl'),title=$('pinEditName');
   title.value=name;field.value=url;field.setCustomValidity('');title.setCustomValidity('');
@@ -229,12 +316,40 @@ function listEntries(){
       pencil.onclick=()=>editPin(i,name,value);actions.append(pencil,remove);info.title=value;
       row.append(siteMark(name,value),info,actions);return row;
     }
-    row.append(info,remove);return row;
+    const drag=node('button','clockDrag'),input=node('input','clockName'),actions=node('span','clockActions');
+    input.value=name;input.maxLength=45;input.required=true;input.ariaLabel='Name for '+name+' clock';
+    input.oninput=()=>input.setCustomValidity('');
+    input.onchange=()=>commitClockName(input,i,value);
+    input.onkeydown=e=>{
+      if(e.key==='Enter'){e.preventDefault();if(commitClockName(input,i,value))input.select();}
+      if(e.key==='Escape'){input.value=name;input.setCustomValidity('');input.select();}
+    };
+    drag.draggable=true;drag.ariaLabel=drag.title='Drag to reorder '+name+', or use Alt + Up / Down';
+    buttonIcon(drag,'M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01');
+    drag.ondragstart=e=>{draggedClock=i;e.dataTransfer.setData('text/plain',value);e.dataTransfer.effectAllowed='move';row.classList.add('dragging');};
+    drag.ondragend=endClockDrag;
+    drag.onkeydown=e=>{if(e.altKey&&['ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();moveClock(i,i+(e.key==='ArrowDown'?1:-1));}};
+    row.ondragover=e=>{
+      if(draggedClock===null)return;
+      e.preventDefault();e.dataTransfer.dropEffect='move';clearClockDrop();
+      row.dataset.drop=clockDropSlot(e,row,i)===i?'before':'after';
+    };
+    row.ondrop=e=>{
+      if(draggedClock===null)return;
+      e.preventDefault();const from=draggedClock,slot=clockDropSlot(e,row,i);
+      endClockDrag();moveClock(from,slot>from?slot-1:slot);
+    };
+    remove.className='removeClock';remove.ariaLabel=remove.title='Remove '+name+' clock';
+    buttonIcon(remove,'M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7');
+    info.replaceChildren(input,node('div','meta',`${MeridianClockSettings.timeZoneLabel(value)} · ${MeridianClockSettings.offset(value)}`));actions.append(remove);
+    row.append(drag,info,actions);return row;
   }));
 }
 function edit(key,addOnly=false) {
   editing=key;const sites=key==='pins';$('editorTitle').textContent=sites?'Pinned sites':'World clock';
+  if(!sites)refreshTimeZoneOptions();
   $('editor').classList.toggle('pinEditor',sites);
+  $('editor').classList.toggle('clockEditor',!sites);
   $('addSiteHeading').hidden=!sites||addOnly;
   $('add').querySelector('.primary').textContent=sites?'Pin site':'Add';
   $('primarySetting').hidden=sites;
@@ -244,7 +359,13 @@ function edit(key,addOnly=false) {
   openPinSources(sites);
 }
 const zones=node('datalist');zones.id='zones';
-for(const z of ['UTC',...Intl.supportedValuesOf('timeZone')])zones.append(new Option(z,z));
+const timeZones=[...new Set(['UTC',...defaults.clocks.map(clock=>clock[1]),...Intl.supportedValuesOf('timeZone')])];
+function refreshTimeZoneOptions(){
+  zones.replaceChildren(...timeZones.map(timeZone=>{
+    const option=new Option(MeridianClockSettings.timeZoneSuggestion(timeZone),timeZone);
+    option.label=option.textContent;return option;
+  }));
+}
 document.body.append(zones);
 $('editPins').onclick=()=>edit('pins');$('editClocks').onclick=()=>edit('clocks');$('close').onclick=()=>$('editor').close();
 $('value').oninput=()=>$('value').setCustomValidity('');
@@ -311,54 +432,186 @@ refreshPopover.addEventListener('toggle',event=>{
   if(warningButton)warningButton.setAttribute('aria-expanded',String(event.newState==='open'));
   if(event.newState==='closed')warningButton=null;
 });
+const briefingFeedbackKey='meridian.briefingFeedback', actionOrderKey='meridian.actionOrder';
+let activeCorrection,draggedActionId;
+function readBriefingFeedback(){
+  try{return MeridianBriefingFeedback.normalize(JSON.parse(localStorage.getItem(briefingFeedbackKey)));}
+  catch{return MeridianBriefingFeedback.normalize(null);}
+}
+function saveBriefingFeedback(feedback){
+  localStorage.setItem(briefingFeedbackKey,JSON.stringify(feedback));
+}
+function briefingFeedbackText(){
+  return JSON.stringify(readBriefingFeedback(),null,2)+'\n';
+}
+function setFeedbackSyncState(synced){
+  $('briefingFeedbackSyncStatus').textContent=synced
+    ?'Corrections sync automatically with the hourly briefing.'
+    :'Corrections stay in this browser. Reinstall Meridian’s local feedback helper to restore hourly sync.';
+  $('briefingCorrectionHandoff').textContent=synced
+    ?'The item is removed immediately and the correction is shared automatically with the hourly briefing.'
+    :'The item is removed immediately and saved in this browser. Hourly sync is unavailable until Meridian’s local feedback helper is installed.';
+}
+async function syncBriefingFeedback(){
+  try{
+    const result=await MeridianBriefingFeedbackStore.update(briefingFeedbackText());
+    const synced=result.status==='written';
+    if(synced&&result.feedback){
+      const merged=MeridianBriefingFeedback.normalize(result.feedback);
+      if(JSON.stringify(merged)!==JSON.stringify(readBriefingFeedback())){
+        saveBriefingFeedback(merged);
+        if(current)feed(current);
+      }
+    }
+    setFeedbackSyncState(synced);
+    return result;
+  }catch{
+    setFeedbackSyncState(false);
+    return {status:'unavailable'};
+  }
+}
+$('briefingOptionsButton').onclick=()=>{
+  const popover=$('briefingOptions');
+  if(popover.matches(':popover-open')){popover.hidePopover();return;}
+  popover.showPopover();
+  const button=$('briefingOptionsButton'),rect=button.getBoundingClientRect(),width=Math.min(300,innerWidth-24);
+  popover.style.width=width+'px';
+  popover.style.left=Math.max(12,Math.min(innerWidth-width-12,rect.right-width))+'px';
+  popover.style.top=Math.min(innerHeight-popover.offsetHeight-12,rect.bottom+7)+'px';
+};
+$('briefingOptions').addEventListener('toggle',event=>{
+  $('briefingOptionsButton').setAttribute('aria-expanded',String(event.newState==='open'));
+});
+function actionOrder(){
+  try{const value=JSON.parse(localStorage.getItem(actionOrderKey));return Array.isArray(value)?value:[];}
+  catch{return [];}
+}
+function saveActionOrder(ids){
+  localStorage.setItem(actionOrderKey,JSON.stringify(ids));
+  $('resetActionOrder').hidden=false;
+}
+function focusAction(id){
+  requestAnimationFrame(()=>[...$('actions').querySelectorAll('.briefingDrag')].find(button=>button.dataset.actionId===id)?.focus());
+}
+function reorderAction(id,targetId,after){
+  const ids=[...$('actions').querySelectorAll('.entry')].map(row=>row.dataset.actionId).filter(actionId=>actionId!==id);
+  const target=ids.indexOf(targetId);
+  ids.splice(target+Number(after),0,id);saveActionOrder(ids);feed(current);focusAction(id);
+}
+function moveAction(id,offset){
+  const ids=[...$('actions').querySelectorAll('.entry')].map(row=>row.dataset.actionId),from=ids.indexOf(id),to=from+offset;
+  if(from<0||to<0||to>=ids.length)return;
+  ids.splice(to,0,ids.splice(from,1)[0]);saveActionOrder(ids);feed(current);focusAction(id);
+}
+function clearActionDrop(){
+  for(const row of $('actions').querySelectorAll('[data-drop]'))delete row.dataset.drop;
+  $('actions').querySelector('.dragging')?.classList.remove('dragging');
+}
+function actionRow(action,data){
+  const row=node('div','entry'),box=node('input'),body=node('div','briefingBody'),tools=node('div','briefingActions');
+  row.dataset.actionId=action.id;box.type='checkbox';
+  const done=read('done');
+  box.checked=done.includes(action.id)||Boolean(action.completion);box.disabled=Boolean(action.completion);box.ariaLabel=action.title;
+  box.onchange=()=>{
+    save('done',box.checked?[...new Set([...read('done'),action.id])]:read('done').filter(x=>x!==action.id));
+    const dates=readObject('doneDates');
+    if(box.checked)dates[action.id]=localDate(new Date());else delete dates[action.id];
+    localStorage.setItem('meridian.doneDates',JSON.stringify(dates));
+    renderConstellation(data);
+  };
+  body.append(linked(action.title,action.url));
+  if(action.context)body.append(node('p','briefContext',action.context));
+  body.append(node('div','meta',action.source));
+  if(action.completion){
+    const evidence=node('div','meta',`Completed by Copilot · ${action.completion.date} · ${action.completion.reason} `);
+    const source=linked(action.completion.source,action.completion.url);source.className='text';evidence.append(source);body.append(evidence);
+  }
+  const drag=node('button','briefingDrag');drag.type='button';drag.dataset.actionId=action.id;
+  drag.ariaLabel=`Reorder ${action.title}. Use arrow keys to move.`;drag.title='Drag or use arrow keys to reorder';
+  buttonIcon(drag,'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01');
+  drag.draggable=true;
+  drag.ondragstart=event=>{draggedActionId=action.id;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',action.id);row.classList.add('dragging');};
+  drag.ondragend=()=>{draggedActionId=null;clearActionDrop();};
+  drag.onkeydown=event=>{
+    if(!['ArrowUp','ArrowDown'].includes(event.key))return;
+    event.preventDefault();moveAction(action.id,event.key==='ArrowUp'?-1:1);
+  };
+  const correct=node('button','briefingCorrect');correct.type='button';correct.ariaLabel=correct.title=`Correct or dismiss ${action.title}`;
+  buttonIcon(correct,'M6 6l12 12M18 6 6 18');
+  correct.onclick=()=>{
+    activeCorrection={id:action.id,index:[...$('actions').children].indexOf(row)};
+    $('briefingCorrectionForm').reset();$('briefingCorrectionDetail').value='';$('briefingCorrection').showModal();
+  };
+  tools.append(drag,correct);row.append(box,body,tools);
+  row.ondragover=event=>{
+    if(!draggedActionId||draggedActionId===action.id)return;
+    event.preventDefault();clearActionDrop();
+    row.dataset.drop=event.clientY>=row.getBoundingClientRect().top+row.getBoundingClientRect().height/2?'after':'before';
+  };
+  row.ondrop=event=>{
+    if(!draggedActionId||draggedActionId===action.id)return;
+    event.preventDefault();const id=draggedActionId,after=row.dataset.drop==='after';draggedActionId=null;clearActionDrop();reorderAction(id,action.id,after);
+  };
+  return row;
+}
+$('resetActionOrder').onclick=()=>{
+  localStorage.removeItem(actionOrderKey);feed(current);$('actions').querySelector('.briefingDrag')?.focus();
+};
+$('cancelBriefingCorrection').onclick=()=>$('briefingCorrection').close();
+$('briefingCorrectionForm').onsubmit=event=>{
+  event.preventDefault();
+  if(!activeCorrection)return;
+  const reason=new FormData(event.currentTarget).get('briefingReason');
+  const feedback=MeridianBriefingFeedback.dismiss(readBriefingFeedback(),activeCorrection.id,reason,$('briefingCorrectionDetail').value);
+  const focusIndex=activeCorrection.index;saveBriefingFeedback(feedback);
+  if(localStorage.getItem(actionOrderKey))localStorage.setItem(actionOrderKey,JSON.stringify(actionOrder().filter(id=>id!==activeCorrection.id)));
+  activeCorrection=null;$('briefingCorrection').close();feed(current);
+  syncBriefingFeedback().then(result=>{
+    if(result.status==='written')notice('Correction saved and shared with the hourly briefing.');
+    else notice('Correction saved in this browser. Meridian’s local feedback helper is unavailable, so the hourly briefing cannot read it yet.');
+  }).catch(()=>notice('Correction saved in this browser, but the hourly feedback helper could not be reached.'));
+  requestAnimationFrame(()=>{
+    const controls=$('actions').querySelectorAll('.briefingCorrect');
+    (controls[Math.min(focusIndex,controls.length-1)]||$('resetActionOrder')).focus();
+  });
+};
 function feed(data) {
   current=data;
   const generated=$('briefGenerated'), stamp=data.actions.generatedAt;
   if(Number.isFinite(Date.parse(stamp))){
     generated.dateTime=stamp;
     const mins=Math.max(0,Math.floor((Date.now()-Date.parse(stamp))/60000));
-    generated.textContent=mins===0?'Generated just now':`Generated ${mins} ${mins===1?'min':'mins'} ago`;
-    generated.title=new Date(stamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'});
+    generated.textContent=mins===0?'Now':mins<60?`${mins}m ago`:mins<1440?`${Math.floor(mins/60)}h ago`:`${Math.floor(mins/1440)}d ago`;
+    generated.ariaLabel=mins===0?'Briefing generated just now':`Briefing generated ${mins} ${mins===1?'minute':'minutes'} ago`;
+    generated.title=`Hourly briefing · ${new Date(stamp).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZoneName:'short'})}`;
   }else{
-    generated.removeAttribute('datetime');generated.removeAttribute('title');generated.textContent='Generation time unavailable';
+    generated.removeAttribute('datetime');generated.removeAttribute('title');generated.removeAttribute('aria-label');generated.textContent='Time unavailable';
   }
-  updateArtwork(data);
-  const done=read('done');const when=d=>new Date(d).toLocaleString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  const feedback=readBriefingFeedback(),filteredActions=MeridianBriefingFeedback.apply(data.actions.items,feedback);
+  const orderedActions=MeridianBriefingFeedback.order(filteredActions,actionOrder());
+  const dismissed=filteredActions.length!==data.actions.items.length;
+  const displayData={...data,art:{...data.art,actions:orderedActions.length},actions:{...data.actions,items:orderedActions,focus:dismissed?null:data.actions.focus}};
+  updateArtwork(displayData);
+  const when=d=>new Date(d).toLocaleString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
   const rendering={
-    actions:a=>{
-      const row=node('div','entry'), box=node('input'),body=node('div');box.type='checkbox';box.checked=done.includes(a.id)||Boolean(a.completion);box.disabled=Boolean(a.completion);box.ariaLabel=a.title;
-      box.onchange=()=>{
-        save('done',box.checked?[...new Set([...read('done'),a.id])]:read('done').filter(x=>x!==a.id));
-        const dates=readObject('doneDates');
-        if(box.checked)dates[a.id]=localDate(new Date());else delete dates[a.id];
-        localStorage.setItem('meridian.doneDates',JSON.stringify(dates));
-        renderConstellation(data);
-      };
-      body.append(linked(a.title,a.url));
-      if(a.context)body.append(node('p','briefContext',a.context));
-      body.append(node('div','meta',a.source));
-      if(a.completion){
-        const evidence=node('div','meta',`Completed by Copilot · ${a.completion.date} · ${a.completion.reason} `);
-        const source=linked(a.completion.source,a.completion.url);source.className='text';evidence.append(source);body.append(evidence);
-      }
-      row.append(box,body);return row;
-    },
     agenda:e=>{const row=node('div','entry'),b=node('div');b.append(node('div','meta',e.allDay?'All day · '+new Date(e.start).toLocaleDateString():when(e.start)),linked(e.title,e.url));row.append(b);return row;},
   };
   prColumns(data.prs);
+  $('actionsFocus').replaceChildren(...(displayData.actions.focus?[node('p','briefFocus',displayData.actions.focus)]:[]));
+  $('actions').replaceChildren(...orderedActions.map(action=>actionRow(action,displayData)));
+  if(!orderedActions.length)$('actions').append(node('p','empty','No open action items in this briefing.'));
+  $('resetActionOrder').hidden=!localStorage.getItem(actionOrderKey);
+  setRefreshWarning('actions',data.actions.note);
   for(const [key,render] of Object.entries(rendering)){
     const group=data[key];let items=group.items;
     if(key==='agenda')items=items.filter(e=>Date.parse(e.end)>Date.now()&&!/\b(?:oof|dto|ooo|out[\s-]+of[\s-]+office)\b/i.test(e.title)).sort((a,b)=>Date.parse(a.start)-Date.parse(b.start)).slice(0,4);
     $(key).replaceChildren(...items.map(render));
-    if(key==='actions'&&group.focus){
-      $(key).prepend(node('p','briefFocus',group.focus));
-    }
     setRefreshWarning(key,group.note);
-    if(!items.length)$(key).append(node('p','empty',{actions:'No open action items in this briefing.',agenda:'No upcoming events in the saved window.',prs:'No active pull requests in this snapshot.'}[key]));
+    if(!items.length)$(key).append(node('p','empty','No upcoming events in the saved window.'));
   }
   setRefreshWarning('prs',data.prs.note);
   $('stamp').textContent='Local snapshot · '+when(data.updated)+(Date.now()-Date.parse(data.updated)>90*60000?' · Refresh overdue':'');
-  renderConstellation(data);
+  renderConstellation(displayData);
 }
 function localDate(date){
   const offset=date.getTimezoneOffset()*60000;
@@ -406,11 +659,76 @@ async function refresh() {
     });
   }
 }
+const searchEngineKey='meridian.searchEngine';
+function readSearchEngine(){
+  try{return MeridianSearchEngine.normalize(JSON.parse(localStorage.getItem(searchEngineKey)));}
+  catch{return {...MeridianSearchEngine.DEFAULT};}
+}
+let searchEngine=readSearchEngine();
+function setSearchEngineEditor(engine){
+  const custom=engine==='custom';
+  $('customSearchSetting').hidden=!custom;
+  $('saveSearchEngine').hidden=!custom;
+}
+function syncSearchEngineSettings(){
+  $('searchEngine').value=searchEngine.engine;
+  $('customSearchTemplate').value=searchEngine.customTemplate;
+  setSearchEngineEditor(searchEngine.engine);
+}
+function persistSearchEngine(next){
+  try{
+    localStorage.setItem(searchEngineKey,JSON.stringify(next));
+    searchEngine=next;
+    $('searchEngineStatus').textContent='';
+    showSettingsSaved();
+    return true;
+  }catch(error){
+    $('searchEngineStatus').textContent=`Search engine was not saved: ${error.message}`;
+    return false;
+  }
+}
+$('searchEngine').onchange=()=>{
+  const engine=$('searchEngine').value;
+  setSearchEngineEditor(engine);
+  $('customSearchTemplate').setCustomValidity('');
+  $('searchEngineStatus').textContent='';
+  if(engine==='custom'){
+    $('customSearchTemplate').focus();
+    return;
+  }
+  const next=MeridianSearchEngine.normalize({engine,customTemplate:searchEngine.customTemplate});
+  if(!persistSearchEngine(next))syncSearchEngineSettings();
+};
+$('customSearchTemplate').oninput=()=>{
+  $('customSearchTemplate').setCustomValidity('');
+  $('searchEngineStatus').textContent='';
+};
+$('searchEngineForm').onsubmit=e=>{
+  e.preventDefault();
+  const engine=$('searchEngine').value,customTemplate=$('customSearchTemplate').value.trim();
+  if(engine!=='custom')return;
+  if(engine==='custom'&&!MeridianSearchEngine.validCustomTemplate(customTemplate)){
+    $('customSearchTemplate').setCustomValidity('Enter an HTTP or HTTPS search URL containing {query}.');
+    $('customSearchTemplate').reportValidity();return;
+  }
+  const next=MeridianSearchEngine.normalize({engine,customTemplate});
+  if(persistSearchEngine(next))syncSearchEngineSettings();
+};
+window.addEventListener('storage',e=>{
+  if(e.key!==searchEngineKey)return;
+  searchEngine=readSearchEngine();syncSearchEngineSettings();
+});
+$('settings').addEventListener('close',()=>{
+  $('customSearchTemplate').setCustomValidity('');
+  $('searchEngineStatus').textContent='';
+  syncSearchEngineSettings();
+});
+syncSearchEngineSettings();
 $('query').placeholder='Search your history or the web...';
 $('mode').onchange=()=>{const ai=$('mode').value==='Copilot';$('query').placeholder=ai?'Write a prompt for Microsoft 365 Copilot':'Search your history or the web...';$('search').querySelector('button').ariaLabel=ai?'Copy prompt and open Copilot':'Run search';$('notice').hidden=!ai;if(ai)notice('Your prompt will be copied. Paste it into Microsoft 365 Copilot.');};
 $('search').onsubmit=async e=>{
   e.preventDefault();const q=$('query').value.trim();if(!q)return;
-  if($('mode').value==='Web'){location.assign('https://www.bing.com/search?q='+encodeURIComponent(q));return;}
+  if($('mode').value==='Web'){location.assign(MeridianSearchEngine.searchUrl(searchEngine,q));return;}
   try{await navigator.clipboard.writeText(q);location.assign('https://m365.cloud.microsoft/chat');}
   catch{ $('query').select();notice('Clipboard access is unavailable. Copy the selected prompt, then ');const a=node('a','','open Microsoft 365 Copilot ↗');a.href='https://m365.cloud.microsoft/chat';$('notice').append(a); }
 };
@@ -421,6 +739,7 @@ function tickDial(){
   if(minute!==lastClockMinute){lastClockMinute=minute;clocks();}
 }
 pins();tickDial();refresh();
+syncBriefingFeedback();
 setInterval(()=>{if(!document.hidden)tickDial();},1000);
 setInterval(()=>{if(!document.hidden)refresh();},60000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){tickDial();refresh();}});

@@ -1,20 +1,9 @@
 'use strict';
 const assert = require('node:assert/strict');
-const {ONE_HOUR_MS, DEFER_GRACE_MS, meetingsFromSnapshot, deferralEnd} = require('./break-core.js');
 const {DEFAULTS} = require('./break-preferences.js');
 const {createBreakService} = require('./break-service.js');
 
 const at = value => Date.parse(`2026-11-20T${value}:00.000Z`);
-assert.equal(deferralEnd([
-  {start: at('10:00'), end: at('11:00')},
-  {start: at('11:00'), end: at('12:00')},
-  {start: at('13:00'), end: at('13:30')}
-], at('10:30')), at('12:00') + DEFER_GRACE_MS, 'back-to-back meetings should defer through the chain');
-assert.deepEqual(meetingsFromSnapshot({agenda: {items: [
-  {title: 'Planning', start: '2026-11-20T10:00:00Z', end: '2026-11-20T11:00:00Z'},
-  {title: 'OOF', start: '2026-11-20T11:00:00Z', end: '2026-11-20T12:00:00Z'},
-  {title: 'Holiday', allDay: true, start: '2026-11-20T00:00:00Z', end: '2026-11-21T00:00:00Z'}
-]}}), [{start: at('10:00'), end: at('11:00')}], 'away and all-day events should not block reminders');
 
 let now = at('09:00');
 let stored;
@@ -26,7 +15,6 @@ const cueSounds = [];
 let ids = 0;
 let storedPreferences = structuredClone(DEFAULTS);
 const ledger = [];
-let snapshot = {agenda: {items: []}};
 const api = {
   now: () => now,
   store: {
@@ -43,7 +31,6 @@ const api = {
     clear: async name => { if (alarm?.name === name) alarm = null; },
     create: async (name, info) => { alarm = {name, ...info}; }
   },
-  calendar: {getSnapshot: async () => snapshot},
   notify: async reminder => { notifications++;notificationReminders.push(reminder); },
   playCue: async sound => { cues++;cueSounds.push(sound); }
 };
@@ -57,20 +44,10 @@ const service = createBreakService(api);
   assert.equal(alarm.when, at('10:00'), 'punch-in should schedule the first reminder one hour later');
   assert.equal(notifications, 0, 'punch-in must not deliver immediately');
 
-  snapshot = {agenda: {items: [
-    {title: 'Review', start: '2026-11-20T10:00:00Z', end: '2026-11-20T11:00:00Z'},
-    {title: 'Design', start: '2026-11-20T11:00:00Z', end: '2026-11-20T12:00:00Z'}
-  ]}};
   now = at('10:00');
   await service.handleAlarm();
-  assert.equal(notifications, 0);
-  assert.equal(cues, 0);
-  assert.equal(alarm.when, at('12:00') + DEFER_GRACE_MS, 'meeting reminder should move to the end of the meeting chain');
-
-  now = alarm.when;
-  await service.handleAlarm();
-  assert.equal(notifications, 1, 'deferred reminder should deliver once');
-  assert.equal(cues, 1, 'deferred reminder should play one cue');
+  assert.equal(notifications, 1, 'a due reminder should deliver even during calendar events');
+  assert.equal(cues, 1, 'a due reminder should play one cue');
   assert.equal(alarm.when, now + 10 * 60 * 1000, 'an overdue reminder should repeat at the configured cadence');
 
   await service.handleAlarm();
@@ -100,7 +77,6 @@ const service = createBreakService(api);
   assert.equal(alarm.when, now + 45 * 60 * 1000, 'resume should use the configured interval');
   assert.equal(await service.takeBreakForReminder(notificationReminders.at(-1)), false, 'a reminder action from before resume should stay stale');
   assert.equal(stored.mode, 'working');
-  snapshot = {agenda: {items: []}};
   now = alarm.when;
   await service.handleAlarm();
   assert.equal(notifications, 2, 'disabled notifications should not be delivered');
@@ -115,11 +91,33 @@ const service = createBreakService(api);
   assert.equal(notifications, 2, 'inactive shifts should ignore background alarms');
   assert.deepEqual(ledger.map(event => event.type), ['punch-in', 'break-start', 'break-end', 'punch-out']);
 
-  stored = {active: true, mode: 'working', punchedInAt: at('08:00'), nextReminderAt: at('09:00')};
+  const legacyPreferences = structuredClone(storedPreferences);
+  const legacyDeferredShift = {
+    active: true,
+    mode: 'working',
+    punchedInAt: at('08:00'),
+    workStartedAt: at('08:00'),
+    lastReminderAt: at('09:00'),
+    nextReminderAt: at('17:00'),
+    deferredUntil: at('17:00'),
+    calendarAvailable: true
+  };
+  stored = structuredClone(legacyDeferredShift);
   now = at('13:00');
   await service.restore();
-  assert.equal(alarm.when, now + 1000, 'a browser restart should restore one overdue reminder without replaying missed hours');
-  console.log('Break scheduling, deferral, delivery, restart, and punch-out passed.');
+  assert.equal(alarm.when, now + 1000, 'a legacy deferred alarm should restore as one overdue reminder');
+  assert.equal(stored.punchedInAt, legacyDeferredShift.punchedInAt, 'restoring must not reset the shift');
+  assert.equal(stored.workStartedAt, legacyDeferredShift.workStartedAt, 'restoring must preserve break cadence');
+  assert.equal('deferredUntil' in stored, false, 'restore should remove the legacy deferral timestamp');
+  assert.equal('calendarAvailable' in stored, false, 'restore should remove legacy calendar state');
+  assert.deepEqual(storedPreferences, legacyPreferences, 'restore should preserve delivery and cadence preferences');
+
+  now = alarm.when;
+  await service.handleAlarm();
+  assert.equal(notifications, 2, 'the restored reminder should preserve disabled notification preferences');
+  assert.equal(cues, 4, 'the restored reminder should preserve enabled sound preferences');
+  assert.equal(alarm.when, now + 7 * 60 * 1000, 'the restored reminder should resume the configured repeat cadence without a burst');
+  console.log('Break scheduling, delivery, legacy restore, and punch-out passed.');
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

@@ -10,7 +10,6 @@
   const clockDetail = document.getElementById('clockDetail');
   const breakWarning = document.getElementById('breakWarning');
   const shiftControl = status.closest('.shiftControl');
-  const capability = document.getElementById('breakCapability');
   const settingsForm = document.getElementById('breakSettingsForm');
   const intervalInput = document.getElementById('breakInterval');
   const warningInput = document.getElementById('breakWarningLead');
@@ -21,14 +20,12 @@
   const notificationHelp = notificationsEnabled.closest('.settingName').querySelector('.helpTip');
   const testButton = document.getElementById('testBreakReminder');
   const settingsStatus = document.getElementById('breakSettingsStatus');
-  const savedStatus = document.getElementById('breakSaved');
   let state = {active: false};
   let preferences = MeridianBreakPreferences.normalize();
   let workerSounds = new Set(['chime', 'bell', 'pulse']);
   let focusBreakControl = location.hash === '#break-control';
   notificationHelp.ariaLabel = 'Desktop notification: Asks your browser to show a silent system notification.';
   notificationHelp.dataset.tooltip = 'Ask your browser to show a silent system notification.';
-  let savedTimer;
   const time = value => new Date(value).toLocaleTimeString(undefined, {hour: 'numeric', minute: '2-digit'});
   function updateClockStatus() {
     const view = MeridianBreakStatus.model(state, Date.now(), preferences);
@@ -52,7 +49,7 @@
   function render(next, nextPreferences) {
     state = next;
     if (nextPreferences) showPreferences(nextPreferences);
-    label.textContent = state.active ? 'Punch out' : 'Punch in';
+    label.textContent = state.active ? 'Clock out' : 'Clock in';
     button.classList.toggle('active', state.active);
     button.setAttribute('aria-pressed', String(state.active));
     breakButton.hidden = !state.active;
@@ -70,21 +67,15 @@
         }
       });
     }
-    capability.hidden = state.calendarAvailable !== false;
-    capability.textContent = state.calendarAvailable === false ?
-      'The calendar snapshot is unavailable, so reminders may arrive during meetings. Browser or operating system settings can also silence sound and notifications.' : '';
     if (!state.active) {
-      status.title = 'Punch in to start local work-time tracking and hourly break reminders.';
+      status.title = 'Clock in to start local work-time tracking and hourly break reminders.';
       return;
     }
     if (state.mode === 'break') {
       status.title = 'Break reminders are paused. Resume starts a new uninterrupted-work hour.';
       return;
     }
-    const nextTime = state.deferredUntil || state.nextReminderAt;
-    status.title = `${state.deferredUntil ? `Reminder after meeting at ${time(nextTime)}. ` : `Next break reminder at ${time(nextTime)}. `}${state.calendarAvailable === false ?
-      'The calendar snapshot is unavailable, so a reminder may arrive during a meeting. Browser or operating system settings can silence notifications.' :
-      'Uses the saved hourly calendar snapshot to defer reminders during meetings. Browser or operating system settings can silence notifications.'}`;
+    status.title = `Next break reminder at ${time(state.nextReminderAt)}. Browser or operating system settings can silence notifications.`;
   }
   function preferencesFromForm() {
     warningInput.setCustomValidity('');
@@ -107,11 +98,6 @@
     settingsStatus.textContent = text;
     settingsStatus.dataset.kind = kind;
   }
-  function showSaved() {
-    clearTimeout(savedTimer);
-    savedStatus.textContent = '✓ Saved';
-    savedTimer = setTimeout(() => {savedStatus.textContent = '';}, 1800);
-  }
   async function send(type, extra = {}) {
     const response = await chrome.runtime.sendMessage({type, ...extra});
     if (!response?.ok) throw Error(response?.error || 'The reminder service did not respond.');
@@ -125,13 +111,12 @@
     clockState.textContent = 'Off the clock';
     clockDetail.textContent = 'Installed extension required for reminders.';
     status.title = 'Background alarms, sound, and desktop notifications are unavailable in the file preview.';
-    capability.textContent = 'Background alarms, sound, and desktop notifications are unavailable in the file preview.';
-    capability.hidden = false;
+    setSettingsStatus('Background alarms, sound, and desktop notifications are unavailable in the file preview.');
     for (const control of settingsForm.elements) control.disabled = true;
     return;
   }
   button.onclick = async () => {
-    if (state.active && !confirm('Punch out and end this shift?')) return;
+    if (state.active && !confirm('Clock out and end this shift?')) return;
     button.disabled = true;
     try {
       await send(state.active ? 'meridian.shift.punchOut' : 'meridian.shift.punchIn');
@@ -167,7 +152,7 @@
       const selected = preferencesFromForm();
       await send('meridian.break.preferences.save', {preferences: selected});
       if (settingsStatus.dataset.kind === 'validation') setSettingsStatus('');
-      showSaved();
+      globalThis.MeridianSettingsStatus.saved();
       return selected;
     } catch (error) {
       setSettingsStatus(error.message, 'validation');

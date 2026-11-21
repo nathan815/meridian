@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const VERSION = 5;
+  const VERSION = 6;
   const breakPreferenceCore = globalThis.MeridianBreakPreferences || (typeof require !== 'undefined' ? require('./break-preferences.js') : null);
   const PREFIX = 'meridian.';
   const DEFAULT_PINS = [['GitHub', 'https://github.com/'], ['Outlook', 'https://outlook.office.com/'], ['Teams', 'https://teams.microsoft.com/'], ['Microsoft Learn', 'https://learn.microsoft.com/']];
@@ -49,7 +49,7 @@
   function validate(payload) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload) ||
       !exactKeys(payload, ['format', 'version', 'exportedAt', 'data']) ||
-      payload.format !== 'meridian-backup' || ![1, 2, 3, 4, VERSION].includes(payload.version) ||
+      payload.format !== 'meridian-backup' || ![1, 2, 3, 4, 5, VERSION].includes(payload.version) ||
       !Number.isFinite(Date.parse(payload.exportedAt))) throw Error('This is not a supported Meridian backup.');
     const data = payload.data;
     const allowedKeys = ['pins', 'clocks', 'primaryClock', 'theme', 'art', 'recipes'];
@@ -60,9 +60,22 @@
       !exactKeys(data, allowedKeys)) throw Error('The backup contains unsupported data.');
     if (!pairList(data.pins, validUrl)) throw Error('The pinned sites are invalid.');
     if (!pairList(data.clocks, validZone)) throw Error('The world clocks are invalid.');
-    if (data.primaryClock !== null && (!Array.isArray(data.primaryClock) || data.primaryClock.length !== 2 ||
-      !text(data.primaryClock[0], 45) || !validZone(data.primaryClock[1]) ||
-      !data.clocks.some(clock => JSON.stringify(clock) === JSON.stringify(data.primaryClock)))) throw Error('The primary clock is invalid.');
+    let primaryClock = null;
+    if (data.primaryClock !== null) {
+      if (payload.version >= 6) {
+        if (!validZone(data.primaryClock) || !data.clocks.some(clock => clock[1] === data.primaryClock)) {
+          throw Error('The primary clock is invalid.');
+        }
+        primaryClock = data.primaryClock;
+      } else {
+        if (!Array.isArray(data.primaryClock) || data.primaryClock.length !== 2 ||
+          !text(data.primaryClock[0], 45) || !validZone(data.primaryClock[1]) ||
+          !data.clocks.some(clock => JSON.stringify(clock) === JSON.stringify(data.primaryClock))) {
+          throw Error('The primary clock is invalid.');
+        }
+        primaryClock = data.primaryClock[1];
+      }
+    }
     if (!['system', 'light', 'dark', 'solar'].includes(data.theme)) throw Error('The color mode is invalid.');
     if (!text(data.art, 100)) throw Error('The selected background is invalid.');
     if (!Array.isArray(data.recipes) || data.recipes.length > 100 || !data.recipes.every(validRecipe)) throw Error('The saved art is invalid.');
@@ -78,7 +91,7 @@
       structuredClone(breakPreferenceCore.DEFAULTS);
     const recipeIds = new Set(data.recipes.map(recipe => recipe.id));
     if (!BUILTIN_ART.has(data.art) && !recipeIds.has(data.art)) throw Error('The selected background is missing from saved art.');
-    return structuredClone({...data, workTime, solarSchedule, breakPreferences});
+    return structuredClone({...data, primaryClock, workTime, solarSchedule, breakPreferences});
   }
   function readJson(key, fallback) {
     try {
@@ -93,7 +106,8 @@
     let primaryClock = null;
     try {
       const saved = JSON.parse(localStorage.getItem(PREFIX + 'primaryClock'));
-      if (clocks.some(clock => JSON.stringify(clock) === JSON.stringify(saved))) primaryClock = saved;
+      const timeZone = typeof saved === 'string' ? saved : Array.isArray(saved) ? saved[1] : null;
+      if (clocks.some(clock => clock[1] === timeZone)) primaryClock = timeZone;
     } catch {}
     const solarSchedule = readJson('solarSchedule', DEFAULT_SOLAR_SCHEDULE);
     return {
@@ -193,7 +207,7 @@
       if (location.protocol === 'chrome-extension:' && chrome.storage?.local) {
         const stored = await chrome.storage.local.get(['meridian.shift', 'meridian.workTime', 'meridian.breakPreferences']);
         if (stored['meridian.shift']?.active) {
-          $('importSummary').textContent = 'Punch out before importing work-time records. Nothing changed.';
+          $('importSummary').textContent = 'Clock out before importing work-time records. Nothing changed.';
           return;
         }
         previousWorkTime = Array.isArray(stored['meridian.workTime']) ? stored['meridian.workTime'] : [];

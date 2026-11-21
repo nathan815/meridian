@@ -8,7 +8,7 @@
     return hours ? `${hours}h${minutes ? ` ${minutes}m` : ''}` : `${minutes}m`;
   };
   function model(state, now = Date.now(), preferences = preferenceCore.DEFAULTS) {
-    if (!state?.active) return {stateLabel: 'Off the clock', detail: 'Punch in to start tracking work time.', tone: 'off', warning: ''};
+    if (!state?.active) return {stateLabel: 'Off the clock', detail: 'Clock in to start tracking work time.', tone: 'off', warning: ''};
     const shiftElapsed = elapsed(now - state.punchedInAt);
     if (state.mode === 'break') {
       return {stateLabel: 'On break', detail: `${elapsed(now - state.breakStartedAt)} away · ${shiftElapsed} shift`, tone: 'break', warning: ''};

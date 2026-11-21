@@ -1,5 +1,5 @@
 'use strict';
-importScripts('break-core.js', 'break-preferences.js', 'break-service.js');
+importScripts('break-preferences.js', 'break-service.js');
 
 const stateKey = 'meridian.shift';
 const ledgerKey = 'meridian.workTime';
@@ -69,7 +69,8 @@ function notify(reminder = null) {
 }
 async function playCue(sound) {
   await ensureOffscreen();
-  await chrome.runtime.sendMessage({type: 'meridian.break.playCue', sound});
+  const response = await chrome.runtime.sendMessage({type: 'meridian.break.playCue', sound});
+  if (!response?.ok) throw Error(response?.error || 'The selected sound could not be played.');
 }
 const service = MeridianBreakService.createBreakService({
   alarms,
@@ -78,13 +79,6 @@ const service = MeridianBreakService.createBreakService({
   preferences,
   id: () => crypto.randomUUID(),
   now: () => Date.now(),
-  calendar: {
-    getSnapshot: async () => {
-      const response = await fetch(chrome.runtime.getURL('briefing.json'), {cache: 'no-store'});
-      if (!response.ok) return {agenda: {items: []}};
-      return response.json();
-    }
-  },
   notify,
   playCue
 });
@@ -118,6 +112,7 @@ const run = operation => {
   operationQueue = operationQueue.then(operation, operation);
   return operationQueue;
 };
+run(() => service.restore());
 chrome.alarms.onAlarm.addListener(alarm => {
   if (alarm.name === service.ALARM_NAME) run(() => service.handleAlarm());
 });

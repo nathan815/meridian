@@ -1,6 +1,6 @@
 # Meridian
 
-Meridian is a local-first Chrome new tab extension with world clocks, pinned sites, browser-history search, Copilot prompts, generated backgrounds, break reminders, WorkIQ briefing snapshots, and work-time analysis.
+Meridian is a local-first Chrome new tab extension with world clocks, pinned sites, browser-history search, Copilot prompts, generated backgrounds, break reminders, briefing snapshots, and work-time analysis.
 
 ## Install from source
 
@@ -42,6 +42,10 @@ Meridian starts with safe empty states. To populate the Copilot briefing, Upcomi
 ```
 
 The snapshot file is intentionally excluded from Git so personal calendar and repository data cannot be committed accidentally.
+
+The bundled `meridian-generate-briefing` skill can inspect and update individual briefing sections without replacing unrelated data. It preserves completed action history, treats the proposed action order as priority, and honors dismissals saved by Meridian's optional local feedback helper.
+
+To enable automatic dismissal sync on Windows, run `.\install-briefing-feedback-host.ps1 -ExtensionId <extension-id>` after loading the extension. The helper stores feedback under the current user's local application data directory.
 
 ## Development
 

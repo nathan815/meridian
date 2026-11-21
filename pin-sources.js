@@ -205,12 +205,20 @@ if(location.protocol==='chrome-extension:'&&chrome.permissions){
       button.setAttribute('aria-pressed',String(active));button.classList.toggle('active',active);
     }
     if(changed){
-      persistSourcePreferences();syncSourceControls();
+      try{
+        persistSourcePreferences();
+      }catch(error){
+        sourceSettingStatus.textContent=`Search sources were not updated: ${error.message}`;
+        syncSourceControls();
+        return;
+      }
+      syncSourceControls();
       sourceSettingStatus.textContent='A saved source was turned off because its browser permission is no longer available.';
     }
   }
   async function setSourcePreference(type,enabled){
     sourceSettingStatus.textContent='';
+    const wasEnabled=enabledSources.has(type);
     if(enabled){
       const allowed=await chrome.permissions.contains({permissions:[type]})||
         await chrome.permissions.request({permissions:[type]});
@@ -221,7 +229,16 @@ if(location.protocol==='chrome-extension:'&&chrome.permissions){
       }
       enabledSources.add(type);
     }else enabledSources.delete(type);
-    persistSourcePreferences();syncSourceControls();
+    try{
+      persistSourcePreferences();
+    }catch(error){
+      if(wasEnabled)enabledSources.add(type);else enabledSources.delete(type);
+      syncSourceControls();
+      sourceSettingStatus.textContent=`Search sources were not saved: ${error.message}`;
+      return;
+    }
+    syncSourceControls();
+    globalThis.MeridianSettingsStatus.saved();
     if(mainOpen())updateMain(!mainQuery.value.trim());
   }
   async function reconcileSourcePermissions(){

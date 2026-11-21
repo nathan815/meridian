@@ -44,28 +44,19 @@ const updateArtwork = (() => {
     const direction=(value,positive,negative)=>`${Math.abs(value)}° ${value>=0?positive:negative}`;
     return `${direction(lat,'N','S')}, ${direction(lon,'E','W')}`;
   }
-  function solarElevation(now,[lat,lon]){
-    const rad=Math.PI/180;
-    const year=now.getUTCFullYear(), start=Date.UTC(year,0,1);
-    const g=2*Math.PI*(now-start-43200000)/(Date.UTC(year+1,0,1)-start);
-    const eq=229.18*(.000075+.001868*Math.cos(g)-.032077*Math.sin(g)-.014615*Math.cos(2*g)-.040849*Math.sin(2*g));
-    const dec=.006918-.399912*Math.cos(g)+.070257*Math.sin(g)-.006758*Math.cos(2*g)+.000907*Math.sin(2*g)-.002697*Math.cos(3*g)+.00148*Math.sin(3*g);
-    const hour=(now.getUTCHours()*60+now.getUTCMinutes()+eq+4*lon)/4-180;
-    return Math.sin(rad*lat)*Math.sin(dec)+Math.cos(rad*lat)*Math.cos(dec)*Math.cos(rad*hour);
-  }
   function civilTwilight(now,coords){
-    const threshold=Math.sin(-6*Math.PI/180), dayStart=new Date(now), dayEnd=new Date(now);
+    const threshold=MeridianSolar.civilTwilightThreshold, dayStart=new Date(now), dayEnd=new Date(now);
     dayStart.setHours(0,0,0,0);
     dayEnd.setHours(24,0,0,0);
     const end=dayEnd.getTime(), step=10*60000;
-    let previous=dayStart.getTime(), previousAbove=solarElevation(new Date(previous),coords)>=threshold;
+    let previous=dayStart.getTime(), previousAbove=MeridianSolar.solarElevation(new Date(previous),coords)>=threshold;
     const result={dawn:null,dusk:null,above:previousAbove};
     for(let current=previous+step;current<=end;current+=step){
-      const currentAbove=solarElevation(new Date(current),coords)>=threshold;
+      const currentAbove=MeridianSolar.solarElevation(new Date(current),coords)>=threshold;
       if(currentAbove!==previousAbove){
         let low=previous,high=current;
         for(let index=0;index<16;index++){
-          const middle=(low+high)/2, middleAbove=solarElevation(new Date(middle),coords)>=threshold;
+          const middle=(low+high)/2, middleAbove=MeridianSolar.solarElevation(new Date(middle),coords)>=threshold;
           if(middleAbove===previousAbove)low=middle;else high=middle;
         }
         result[currentAbove?'dawn':'dusk']=high;
@@ -119,9 +110,12 @@ const updateArtwork = (() => {
     }
     el('useFixedSchedule').hidden=false;
     solarMessage('Location-based civil dawn to dusk',`Saved detected location: ${coordinateLabel(coords)}. ${twilightLabel(now,coords)}`);
-    return solarElevation(now,coords)>=Math.sin(-6*Math.PI/180)?'light':'dark';
+    return MeridianSolar.solarElevation(now,coords)>=MeridianSolar.civilTwilightThreshold?'light':'dark';
   }
-  function tone(){el('solarOptions').hidden=mode!=='solar';document.documentElement.dataset.tone=mode==='solar'?solarTone(new Date()):mode==='system'?(media.matches?'dark':'light'):mode;}
+  function tone(){
+    el('solarOptions').hidden=mode!=='solar';
+    document.documentElement.dataset.tone=mode==='solar'?solarTone(new Date()):mode==='system'?(media.matches?'dark':'light'):mode;
+  }
   const solarLocation=el('solarLocation');
   el('useFixedSchedule').onclick=()=>{
     localStorage.removeItem('meridian.solarCoords');
@@ -255,29 +249,68 @@ const updateArtwork = (() => {
       }
     }
   }
-  function postcard(svg,recipe,colors){
-    const meetings=recipe.meetings;
-    shape(svg,'rect',{width:1000,height:600,fill:colors[2],opacity:.12});
-    const ridge=(baseline,scale,color,opacity)=>{
-      const points=['0,600','0,'+baseline];
+  let postcardId=0;
+  function postcard(svg,recipe){
+    const meetings=Array.from({length:24},(_,hour)=>Math.max(0,Math.min(60,Number(recipe.meetings?.[hour])||0)));
+    const seed=Number.isInteger(recipe.seed)?recipe.seed:0;
+    const variation=((Number.isInteger(recipe.hue)?recipe.hue:seed*37)%360+360)%360;
+    const skyHue=202+Math.round(18*Math.sin(variation*Math.PI/180));
+    const landHue=174+Math.round(25*Math.cos((variation+35)*Math.PI/180));
+    const sunHue=35+Math.round(11*Math.sin((variation+120)*Math.PI/180));
+    const id=`postcard-${postcardId++}`;
+    const defs=shape(svg,'defs',{});
+    const sky=shape(defs,'linearGradient',{id:`${id}-sky`,x1:0,y1:0,x2:0,y2:1});
+    shape(sky,'stop',{offset:0,'stop-color':'var(--ground)'});
+    shape(sky,'stop',{offset:.7,'stop-color':`hsl(${skyHue} 30% 56%)`,'stop-opacity':.2});
+    shape(sky,'stop',{offset:1,'stop-color':`hsl(${sunHue} 45% 66%)`,'stop-opacity':.17});
+    shape(svg,'rect',{width:1000,height:600,fill:`url(#${id}-sky)`});
+
+    const sunLeft=seed%2===0;
+    const sunX=sunLeft?128+(seed*17)%105:767+(seed*17)%105;
+    shape(svg,'circle',{cx:sunX,cy:112+(seed*13)%54,r:34+(seed%4)*4,fill:`hsl(${sunHue} 56% 68%)`,opacity:.36});
+    shape(svg,'path',{d:'M0 354C155 345 268 359 413 351S739 347 1000 356',fill:'none',stroke:`hsl(${skyHue} 34% 66%)`,'stroke-width':2,opacity:.32});
+
+    const scheduleHeight=x=>{
+      let height=0;
       for(let hour=0;hour<24;hour++){
-        const x=hour/23*1000;
-        const density=meetings[hour];
-        const clustered=(meetings[hour-1]||0)+(meetings[hour+1]||0);
-        const y=baseline-density*scale-clustered*scale*.22;
-        points.push(`${x.toFixed(1)},${Math.max(120,y).toFixed(1)}`);
+        const distance=(x-hour/23*1000)/52;
+        height+=meetings[hour]/60*Math.exp(-distance*distance);
       }
-      points.push('1000,600');
-      shape(svg,'polygon',{points:points.join(' '),fill:color,opacity});
+      return height;
     };
-    ridge(500,5.3,colors[0],.72);
-    ridge(555,3.8,colors[1],.76);
-    for(let hour=1;hour<24;hour++){
-      if(meetings[hour]!==0)continue;
-      const x=hour/24*1000;
-      shape(svg,'path',{d:`M${x} 80v420`,stroke:'var(--ground)','stroke-width':18,opacity:.22});
+    const ridgePath=(baseline,amplitude,calendarScale,phase)=>{
+      const points=[];
+      for(let x=0;x<=1000;x+=10){
+        const edge=.18+.82*Math.pow(Math.abs(x-500)/500,1.55);
+        const terrain=Math.sin(x/93+phase)*.48+Math.sin(x/39-phase*1.7)*.24+Math.sin(x/17+phase*.6)*.08;
+        const calendar=scheduleHeight(x)*calendarScale*(.55+.45*edge);
+        const y=baseline-terrain*amplitude*edge-calendar;
+        points.push(`${x},${y.toFixed(1)}`);
+      }
+      return `M0 600L${points.join('L')}L1000 600Z`;
+    };
+    const layers=[
+      [398,50,24,seed*.031,skyHue-8,25,43,.46],
+      [448,70,38,seed*.047+1.7,landHue+18,28,37,.58],
+      [510,92,52,seed*.061+3.1,landHue,31,30,.72],
+      [568,118,67,seed*.079+4.6,landHue-18,34,23,.84]
+    ];
+    for(const [baseline,amplitude,calendarScale,phase,hue,saturation,lightness,opacity] of layers){
+      shape(svg,'path',{d:ridgePath(baseline,amplitude,calendarScale,phase),fill:`hsl(${hue} ${saturation}% ${lightness}%)`,opacity});
     }
-    shape(svg,'circle',{cx:840,cy:115,r:43,fill:colors[1],opacity:.7});
+
+    for(const [y,width,opacity] of [[442,32,.14],[493,24,.12]]){
+      shape(svg,'path',{d:`M0 ${y}C180 ${y-13} 282 ${y+14} 445 ${y+2}S724 ${y-10} 1000 ${y+4}`,fill:'none',stroke:'var(--ground)','stroke-width':width,opacity,'stroke-linecap':'round'});
+    }
+    const tree=([x,y,height],flip)=>{
+      const direction=flip?-1:1;
+      shape(svg,'path',{d:`M${x} ${y}v${-height}m0 ${height*.22}l${direction*height*.2} ${height*.28}m${-direction*height*.2} ${-height*.13}l${-direction*height*.24} ${height*.31}`,fill:'none',stroke:`hsl(${landHue-22} 31% 19%)`,'stroke-width':Math.max(2,height*.045),opacity:.62,'stroke-linecap':'round'});
+    };
+    const edgeTrees=[
+      [38,546,58],[82,525,82],[132,548,50],
+      [868,542,54],[920,517,88],[968,545,62]
+    ];
+    edgeTrees.forEach((treeData,index)=>tree(treeData,index>2));
   }
   const renderers={contours,orbits,loom,ribbons,glass,rosette};
   const bounded=n=>Math.min(12,Math.max(0,Number.isInteger(n)?n:0));
@@ -287,7 +320,7 @@ const updateArtwork = (() => {
     let colors=['var(--a)','var(--b)','var(--c)'];
     const offset=state?.palette??0;colors=colors.slice(offset).concat(colors.slice(0,offset));
     if(Number.isInteger(recipe?.hue))colors=[0,38,151].map((shift,i)=>`hsl(${(recipe.hue+shift)%360} ${46+i*9}% ${48+i*6}%)`);
-    if(kind==='postcard')postcard(svg,recipe,colors);
+    if(kind==='postcard')postcard(svg,recipe);
     else{
       const density=state[kind]??({ribbons:state.actions,glass:state.contours,rosette:state.orbits}[kind])??4;
       renderers[kind](svg,recipe?.density??density,(recipe?.seed??state?.seed??0)%360*Math.PI/180,colors);

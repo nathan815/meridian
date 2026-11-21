@@ -21,7 +21,7 @@
     const through = new Date($('rangeEnd').value + 'T00:00:00');through.setDate(through.getDate() + 1);
     return {start: from.getTime(), end: through.getTime()};
   };
-  const eventLabels = {'punch-in': 'Punched in', 'break-start': 'Started a break', 'break-end': 'Resumed work', 'punch-out': 'Punched out'};
+  const eventLabels = {'punch-in': 'Clocked in', 'break-start': 'Started a break', 'break-end': 'Resumed work', 'punch-out': 'Clocked out'};
   function render() {
     const selected = range();
     if (!Number.isFinite(selected.start) || !Number.isFinite(selected.end) || selected.end <= selected.start) return;
@@ -62,7 +62,7 @@
       const label = document.createElement('strong');label.textContent = eventLabels[event.type];
       row.append(time, label);return row;
     }));
-    if (!selectedEvents.length) $('timeline').innerHTML = '<p class="empty">No punches or breaks in this range.</p>';
+    if (!selectedEvents.length) $('timeline').innerHTML = '<p class="empty">No clock events or breaks in this range.</p>';
   }
   async function load() {
     if (location.protocol === 'chrome-extension:' && chrome.storage?.local) {
