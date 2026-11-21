@@ -384,7 +384,7 @@ function linked(title,url) {
   if(href)el.href=href;return el;
 }
 let current;
-function prColumns(group){
+function prColumns(group,reviewData){
   const columns=node('div','prColumns');
   for(const heading of ['For review','Yours']){
     const column=node('div','prColumn'), items=group.items.filter(p=>(p.role==='Yours')===(heading==='Yours'));
@@ -396,6 +396,20 @@ function prColumns(group){
     columns.append(column);
   }
   $('prs').replaceChildren(columns);
+  const library=MeridianPreviewData.reviewLibrary(reviewData);
+  if(!library)return;
+  const history=node('details','reviewHistory');history.open=$('prs').dataset.expanded==='true';
+  history.ontoggle=()=>{if(history.isConnected)$('prs').dataset.expanded=String(history.open);};
+  history.append(node('summary','','Published reviews'));
+  for(const review of library.items){
+    const row=node('div','pr'),body=node('div','reviewBody'),report=linked('Review report ↗',review.url);
+    report.className='text';
+    body.append(linked(review.title,review.prUrl),node('div','meta','Recommendation: '+(review.recommendation||'Not recorded')),report);
+    const state=node('span','tag',review.state||'State unavailable');
+    if(review.state&&library.checkedAt)state.title='State checked '+new Date(library.checkedAt).toLocaleString();
+    row.append(node('span','meta','#'+review.id),body,state);history.append(row);
+  }
+  const all=linked('Review library ↗',library.url);all.className='text';history.append(all);$('prs').append(history);
 }
 const refreshPopover=$('refreshPopover');
 let warningButton;
@@ -596,7 +610,7 @@ function feed(data) {
   const rendering={
     agenda:e=>{const row=node('div','entry'),b=node('div');b.append(node('div','meta',e.allDay?'All day · '+new Date(e.start).toLocaleDateString():when(e.start)),linked(e.title,e.url));row.append(b);return row;},
   };
-  prColumns(data.prs);
+  prColumns(data.prs,data.reviewLibrary);
   $('actionsFocus').replaceChildren(...(displayData.actions.focus?[node('p','briefFocus',displayData.actions.focus)]:[]));
   $('actions').replaceChildren(...orderedActions.map(action=>actionRow(action,displayData)));
   if(!orderedActions.length)$('actions').append(node('p','empty','No open action items in this briefing.'));
@@ -645,6 +659,8 @@ function renderConstellation(data){
 }
 async function refresh() {
   try{
+    const preview=MeridianPreviewData.read(location.protocol,globalThis.MERIDIAN_PREVIEW);
+    if(preview){feed(preview);return;}
     const r=await fetch('briefing.json',{cache:'no-store'});if(!r.ok)throw Error();
     const data=await r.json();feed(data);
   }catch{
